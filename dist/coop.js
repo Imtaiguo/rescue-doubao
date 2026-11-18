@@ -5,6 +5,8 @@ export const BALANCE=Object.freeze({bossHealth:.70,bossDamage:.75,bossTell:1.25,
 const LOCAL='energy dashCooldown dashCharges dashQueued attackTimer manualCooldown defending defenseTransition peaches naidanElapsed naidanCooldown naidanPlaybackTime slowRemaining invulnerable moveX moveY lastPotHit combo comboTimer'.split(' ');
 const BASE_WAVES=ZONES.map(z=>[...z.waves]);
 const ENEMIES=[['chaser','chaser','chaser','shooter'],['chaser','jester','shooter','bell'],['shield','chaser','mimic','shooter','bell'],['jester','bomber','shooter','mimic','bell'],['shield','hammer','shooter','bomber','scribe'],['scribe','hammer','bell','shield','jester','mimic']];
+const DEBUG=(()=>{try{return globalThis.localStorage?.getItem('rescue-doubao-debug')==='1';}catch{return false;}})();
+const debug=(...args)=>{if(DEBUG)console.debug('[rescue-doubao]',...args);};
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const blankInput=()=>({mx:0,my:0,attack:false,defend:false,revive:false});
 const CONTACT_STATES=new Set(['charge','lunge','pounce','slide']);
@@ -23,6 +25,7 @@ export class CoopBattle extends BaseBattle {
   loadPlayer(p){this.currentPlayer=p;this.hero=p.hero;for(const k of LOCAL)this[k]=p[k];}
   use(p,fn){if(p===this.currentPlayer)return fn();this.savePlayer();const before=this.currentPlayer;this.loadPlayer(p);try{return fn();}finally{this.savePlayer();if(before)this.loadPlayer(before);}}
   enterZone(zone,initial=false){
+    debug('enterZone:start',{from:this.zone,to:zone,initial,phase:this.phase,sceneId:this.sceneId,players:this.players.length,actors:this.actors.length});
     this.sceneId=this.sessionId+':'+(++this.sceneIndex);this.effects=[];this.events=[];
     this.savePlayer();const old=this.players||[];
     const members=old.length?old.filter(p=>p.connected):this.roster.map((p,i)=>({...p,name:cleanName(p.name),color:COLORS[i],connected:true}));
@@ -34,6 +37,7 @@ export class CoopBattle extends BaseBattle {
       return {...p,hero,energy:initial?30:Math.max(30,p.energy||0),dashCooldown:0,dashCharges:this.dashUnlocked?2:0,dashQueued:false,attackTimer:.35,manualCooldown:0,defending:false,defenseTransition:0,peaches:initial?1:p.peaches??1,naidanElapsed:-1,naidanCooldown:0,naidanPlaybackTime:null,slowRemaining:0,invulnerable:2,moveX:0,moveY:0,lastPotHit:0,combo:0,comboTimer:0,input:blankInput(),actions:[],lastInput:this.clock,reviveProgress:0};
     });
     if(this.players.length)this.loadPlayer(this.players[0]);this.superOwner=null;
+    debug('enterZone:done',{zone:this.zone,phase:this.phase,sceneId:this.sceneId,players:this.players.length,actors:this.actors.length,crates:this.crates.length,clock:this.clock});
   }
   start(){super.start();this.frame=0;this.effects=[];this.paused=false;}
   disconnect(id){const p=this.players.find(p=>p.id===id);if(!p)return;p.connected=false;p.input=blankInput();p.actions=[];p.hero.hp=0;this.fx('text',p.hero.x,p.hero.y-110,{text:p.name+' 已离开',color:0xffce87});if(!this.players.some(p=>p.connected&&p.hero.hp>0)&&this.phase==='playing')this.phase='defeat';}
@@ -59,7 +63,8 @@ export class CoopBattle extends BaseBattle {
   }
   update(dt){
     const owner=this.players.find(p=>p.id===this.superOwner)||this.players.find(p=>p.connected&&p.hero.hp>0)||this.players[0];
-    if(!owner)return;this.savePlayer();this.loadPlayer(owner);super.update(dt);this.savePlayer();
+    if(!owner)return;this.savePlayer();this.loadPlayer(owner);const before=`${this.zone}:${this.phase}:${this.sceneId}`;super.update(dt);this.savePlayer();
+    const after=`${this.zone}:${this.phase}:${this.sceneId}`;if(before!==after)debug('state-change',{from:before,to:after,players:this.players.length,actors:this.actors.length,shots:this.shots.length,clock:this.clock});
     this.frame++;for(const ev of this.drain()){if(ev.type==='fx')this.effects.push({...ev.fx,eid:++this.effectId,at:this.clock});}
     this.effects=this.effects.filter(e=>this.clock-e.at<(e.duration||1.15)).slice(-96);
   }
@@ -118,6 +123,11 @@ export class CoopBattle extends BaseBattle {
     if(alive)return;this.nextWaveTimer-=dt;if(this.nextWaveTimer>0)return;
     if(this.wave===BASE_WAVES[this.zone].length){
       if(this.zone>=3&&this.zone<=5&&!this.minibossSpawned){this.minibossSpawned=true;const a=this.spawn(['captain','general','marshal'][this.zone-3]);a.x=980*this.arenaScale;a.y=535*this.arenaScale;a.state='intro';a.timer=2;return;}
+      // Dead actors keep a short death animation, but they must not be carried
+      // through the upgrade and chapter-transition snapshots. In a four-player
+      // final wave this otherwise leaves dozens of stale entities in every
+      // packet while all clients are waiting for the next chapter.
+      this.actors=this.actors.filter(a=>!a.dead);
       this.offerUpgrade('zone');this.savePlayer();for(const p of this.players)if(this.dashUnlocked)p.dashCharges=2;return;
     }
     this.wave++;this.waveRemaining=BASE_WAVES[this.zone][this.wave-1]*this.partySize;this.spawnTimer=.4;this.nextWaveTimer=1.2;
