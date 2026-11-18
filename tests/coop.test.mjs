@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {CoopBattle,BALANCE,cleanInput} from '../dist/coop.js';
+import {CoopBattle,BALANCE,cleanInput,ZONES} from '../dist/coop.js';
 const make=(n=2)=>{const m=new CoopBattle(Array.from({length:n},(_,i)=>({id:'p'+i,name:'奶蛙'+(i+1)})));m.start();return m;};
 test('all four bosses use weaker base HP multiplied by party size',()=>{
   for(const n of [1,2,3,4]){const m=make(n);for(const [kind,hp] of Object.entries({captain:3168,general:5280,marshal:7480,boss:8800}))assert.equal(m.makeActor(kind,900,520).hp,Math.round(hp*.7*n));}
@@ -66,6 +66,14 @@ test('wind-up frames do not clone the actor collection',()=>{
   const m=make(4),a=m.makeActor('chaser',300,800);a.state='warn';a.timer=.8;m.actors=[a];const original=globalThis.structuredClone;let calls=0;globalThis.structuredClone=(v)=>{calls++;return original(v);};try{m.stepEnemy(a,1/60);assert.equal(calls,0);assert.equal(m.actors[0],a);}finally{globalThis.structuredClone=original;}
 });
 test('retry starts a fresh visual scene without stale attacks',()=>{const m=make();const before=m.sceneId;m.effects=[{eid:99,type:'rectWarning',at:m.clock}];m.phase='defeat';m.retry();assert.notEqual(m.sceneId,before);assert.equal(m.effects.length,0);});
+test('four-player third-to-fourth chapter transition clears dead actors and keeps snapshots valid',()=>{
+  const m=make(4);m.enterZone(2,true);m.wave=ZONES[2].waves.length;m.waveRemaining=0;m.nextWaveTimer=0;
+  m.actors=Array.from({length:52},(_,i)=>{const a=m.makeActor('chaser',300+i,500);a.dead=true;a.timer=.65;return a;});
+  m.progressWaves(.02);assert.equal(m.phase,'upgrade');assert.equal(m.actors.length,0);
+  m.pending=[{id:'auto',name:'自动奶球',description:'',icon:'◎'}];m.chooseUpgrade('auto');
+  for(let i=0;i<70;i++)m.update(.02);
+  const snapshot=m.snapshot();assert.equal(snapshot.zone,3);assert.equal(snapshot.phase,'playing');assert.equal(snapshot.players.length,4);assert.deepEqual(JSON.parse(JSON.stringify(snapshot)).zone,3);
+});
 test('rapid laugh input is handled while the super-laugh locks ordinary actions',()=>{const m=make();m.enterZone(6,true);m.superCastRemaining=1;m.superOwner='p0';m.superClickRemaining=0;m.superReturnPosition={x:m.hero.x,y:m.hero.y,z:0};m.setInput('p0',{},['rapid']);m.update(.02);assert.ok(m.superLaughElapsed>0);});
 test('all seven chapters survive multi-player AI, skills and projectile simulation',()=>{
   const m=make(4);for(let zone=0;zone<7;zone++){

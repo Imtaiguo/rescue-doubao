@@ -3,6 +3,8 @@ import {RoomNetwork,validCode} from './network.js';
 import {Renderer} from './render.js';
 import {GameAudio} from './audio.js';
 import {LandscapeMode,joystickPosition} from './mobile.js';
+window.addEventListener('error',e=>console.error('[rescue-doubao] uncaught error',e.error||e.message,e.filename?`${e.filename}:${e.lineno}:${e.colno}`:''));
+window.addEventListener('unhandledrejection',e=>console.error('[rescue-doubao] unhandled rejection',e.reason));
 const elements=new Map();const $=s=>{if(!elements.has(s))elements.set(s,document.querySelector(s));return elements.get(s);};
 let model=null,state=null,solo=false,inGame=false,ready=false,lobby=null,modalKey='',lastZone=-1,lastSend=0,lastPublish=0,toastTimer=0,lastHUD=0,lastHUDPhase='',accumulator=0;
 const receivedEffects=new Map(),teamNodes=[],abilityNodes=[];
