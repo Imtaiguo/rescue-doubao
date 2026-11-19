@@ -9,17 +9,54 @@ export class Renderer {
     this.canvas=canvas;this.ctx=canvas.getContext('2d',{alpha:false});this.images=new Map();this.labels=new Map();this.tracks=new Map();this.walks=new Map();this.state=null;this.liveModel=null;this.last=0;this.lastZone=-1;this.camera={x:0,y:0};this.selfId='';this.input={mx:0,my:0};this.packetAt=0;this.frames=[];this.drawCosts=[];this.entities=[];
     this.bullets={friendly:this.bullet('#ffedac','#fffdf0'),enemy:this.bullet('#cfa9f4','#f1deff')};
     this.resizeObserver=new ResizeObserver(()=>this.resize());this.resizeObserver.observe(canvas.parentElement);
-    this.ready=Promise.all(['characters/hero-walk-v3.png','characters/hero-poses-v3.png','characters/hero-run','characters/hero-idle','backgrounds/village','characters/chaser','characters/shooter','characters/crate'].map(k=>this.load(k).ready));
+    // Load every chapter before starting, rather than first requesting its map
+    // while combat is already running. Failed requests still settle ready.
+    this.ready=Promise.all(['characters/hero-walk-v3.png','characters/hero-poses-v3.png','characters/hero-run','characters/hero-idle',...ZONES.map(zone=>'backgrounds/'+zone.background),'characters/chaser','characters/shooter','characters/crate'].map(k=>this.load(k).ready));
   }
   resize(){const width=this.canvas.clientWidth,height=this.canvas.clientHeight;if(width<2||height<2)return;const size=backingSize(width,height,devicePixelRatio||1);if(this.canvas.width!==size.width||this.canvas.height!==size.height){this.canvas.width=size.width;this.canvas.height=size.height;}this.ctx.imageSmoothingEnabled=true;this.ctx.imageSmoothingQuality='high';}
-  load(name){
-    if(this.images.has(name))return this.images.get(name);const img=new Image();
-    img.ready=new Promise(resolve=>{img.onload=()=>{img.loaded=true;resolve(img);};img.onerror=()=>{img.failed=true;resolve(img);};});
-    img.src='./assets/'+name+(/\.(png|webp)$/.test(name)?'':'.webp');this.images.set(name,img);return img;
+  load(name,{retry=false}={}){
+    const cached=this.images.get(name);
+    if(cached&&!(retry&&cached.failed&&name.startsWith('backgrounds/')))return cached;
+    const img=new Image();
+    const url=new URL('./assets/'+name+(/\.(png|webp)$/.test(name)?'':'.webp'),import.meta.url);
+    const background=name.startsWith('backgrounds/');
+    const zones=background?ZONES.flatMap((zone,id)=>name==='backgrounds/'+zone.background?[{zone:id,chapter:id+1,name:zone.name}]:[]):[];
+    img.ready=new Promise(resolve=>{
+      let attempt=0,timer;
+      const finish=()=>{clearTimeout(timer);img.onload=img.onerror=null;resolve(img);};
+      const request=()=>{
+        attempt++;img.failed=false;
+        const path=new URL(url);if(attempt>1)path.searchParams.set('map-retry',String(attempt));
+        if(background)console.log('[rescue-doubao][map] load',{zones,path:path.href,attempt});
+        img.onload=()=>{
+          if(!img.naturalWidth||!img.naturalHeight){fail('empty-image');return;}
+          img.loaded=true;
+          if(background)console.log('[rescue-doubao][map] loaded',{zones,path:path.href,attempt,width:img.naturalWidth,height:img.naturalHeight});
+          finish();
+        };
+        const fail=reason=>{
+          clearTimeout(timer);
+          if(background)console.warn('[rescue-doubao][map] load-failed',{zones,path:path.href,attempt,reason});
+          if(background&&attempt<3){request();return;}
+          img.failed=true;finish();
+        };
+        img.onerror=()=>fail('network-or-decode');
+        timer=setTimeout(()=>fail('timeout'),10000);
+        img.src=path.href;
+      };
+      request();
+    });
+    this.images.set(name,img);return img;
   }
   update(s){
     const previous=this.state;this.packetAt=performance.now();this.state=s;
-    if(s.sceneId!==this.lastSceneId||s.zone!==this.lastZone){this.tracks.clear();this.walks.clear();this.lastZone=s.zone;this.lastSceneId=s.sceneId;const p=s.players.find(p=>p.id===this.selfId)||s.players[0];this.camera=cameraTarget(p?.hero,s.arenaScale);}
+    if(s.sceneId!==this.lastSceneId||s.zone!==this.lastZone){
+      this.tracks.clear();this.walks.clear();this.lastZone=s.zone;this.lastSceneId=s.sceneId;const p=s.players.find(p=>p.id===this.selfId)||s.players[0];this.camera=cameraTarget(p?.hero,s.arenaScale);
+      // A failed preload may have happened minutes ago. Retry once per scene
+      // entry, never once per animation frame or incoming network packet.
+      const background=this.load('backgrounds/'+ZONES[s.zone].background,{retry:true});
+      console.log('[rescue-doubao][map] enter-zone',{zone:s.zone,chapter:s.zone+1,name:ZONES[s.zone].name,sceneId:s.sceneId,path:background.src,loaded:!!background.loaded,failed:!!background.failed});
+    }
     this.load('backgrounds/'+ZONES[s.zone].background);
     if(!this.liveModel){
       const duration=previous&&previous.zone===s.zone?clamp(s.clock-previous.clock,1/120,.1):.05;
@@ -76,6 +113,7 @@ export class Renderer {
     c.restore();
     if(s.superCastRemaining>0){c.fillStyle='#b58ac433';c.fillRect(0,0,1280,720);this.text(s.superClickRemaining>0?'哈哈哈哈哈哈！':'连点 R / 大笑，让笑声继续',640,250,24,'#8a6a4f','#fff5d9eb');}
     this.minimap(s,bg,worldWidth,worldHeight);
+    if(!bg.loaded)this.text(bg.failed?'地图加载失败，请刷新重试':'地图加载中…',640,180,20,'#493a55','#fffaf1f5');
     this.drawCosts.push(performance.now()-start);
     if(this.frames.length>=120){const values=this.frames.slice().sort((a,b)=>a-b),stage=this.canvas.parentElement;stage.dataset.fps=(1000/(this.frames.reduce((a,b)=>a+b)/this.frames.length)).toFixed(1);stage.dataset.frameP95=values[Math.floor(values.length*.95)].toFixed(2);stage.dataset.renderMs=(this.drawCosts.reduce((a,b)=>a+b)/this.drawCosts.length).toFixed(2);this.frames.length=this.drawCosts.length=0;}
   }
