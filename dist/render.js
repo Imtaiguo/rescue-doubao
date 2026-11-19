@@ -104,7 +104,8 @@ export class Renderer {
     const me=s.players.find(p=>p.id===this.selfId&&p.connected)||s.players.find(p=>p.connected),local=me?this.position('p'+me.id,me.hero,dt):null;
     this.camera=followCamera(this.camera,local,s.arenaScale);
     const worldWidth=1280*s.arenaScale,worldHeight=720*s.arenaScale,bg=this.load('backgrounds/'+ZONES[s.zone].background);
-    if(!this.loggedScenes.has(s.sceneId)){this.loggedScenes.add(s.sceneId);console.log('[rescue-doubao][scene] first-frame',{zone:s.zone,sceneId:s.sceneId,background:bg.src,backgroundLoaded:!!bg.loaded,backgroundFailed:!!bg.failed,at:new Date().toISOString()});}
+    const loggedScenes=this.loggedScenes||(this.loggedScenes=new Set());
+    if(!loggedScenes.has(s.sceneId)){loggedScenes.add(s.sceneId);console.log('[rescue-doubao][scene] first-frame',{zone:s.zone,sceneId:s.sceneId,background:bg.src,backgroundLoaded:!!bg.loaded,backgroundFailed:!!bg.failed,at:new Date().toISOString()});}
     if(bg.loaded)c.drawImage(bg,-this.camera.x,-this.camera.y,worldWidth,worldHeight);
     c.save();c.translate(-this.camera.x,-this.camera.y);
     for(const e of s.effects||[])if(warning(e.type))this.effect(e,s.clock,true);
